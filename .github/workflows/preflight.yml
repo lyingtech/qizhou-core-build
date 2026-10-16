@@ -1,0 +1,61 @@
+name: Free macOS resource preflight
+
+on:
+  push:
+    paths: [".github/workflows/preflight.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: free-core-resource-preflight
+  cancel-in-progress: true
+
+jobs:
+  resources:
+    if: github.repository == 'lyingtech/qizhou-core-build' && github.event.repository.private == false
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - name: Measure only - no source download or paid resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          echo "Runner: $RUNNER_OS / $RUNNER_ARCH"
+          sw_vers
+          uname -m
+          sysctl -n hw.ncpu hw.memsize
+          df -Pk "$RUNNER_TEMP" /Applications
+          diskutil info / | head -45
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          echo "Installed Xcode footprints (read only):"
+          du -sk /Applications/Xcode*.app || true
+          python3 - <<'PY'
+          import json, os, platform, shutil
+          from pathlib import Path
+          disk = shutil.disk_usage(os.environ["RUNNER_TEMP"])
+          minimum = 150 * 1024**3
+          report = {"runner": os.environ["RUNNER_ARCH"], "machine": platform.machine(),
+                    "free_bytes": disk.free, "total_bytes": disk.total,
+                    "required_free_bytes": minimum, "capacity_gate_passed": disk.free >= minimum,
+                    "chromium_commit": "3ff7ac5a9224be9156d7f8703a06e22890aafd34",
+                    "fury_commit": "2f00b1511fd8ff75c6f12140ce5c8e891e9d1f47",
+                    "downloaded_chromium": False, "compiled_core": False,
+                    "paid_runner": False, "billing_changes": False}
+          print(json.dumps(report, indent=2))
+          summary = "## Free runner capacity\n\n```json\n" + json.dumps(report, indent=2) + "\n```\n"
+          if not report["capacity_gate_passed"]:
+              summary += "\nInsufficient space for the current reproducible Chromium recipe. No source download or build was started.\n"
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(summary)
+          if not report["capacity_gate_passed"]:
+              print("::error::Resource gate failed; no paid runner fallback is allowed.")
+              raise SystemExit(1)
+          PY
