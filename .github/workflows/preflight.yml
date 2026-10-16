@@ -22,6 +22,32 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     steps:
+      - name: Reclaim disposable VM build space, preserve macOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_REPOSITORY" = lyingtech/qizhou-core-build
+          test -d /Applications/Xcode_26.3.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          python3 - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          assert os.environ["RUNNER_ENVIRONMENT"] == "github-hosted"
+          assert os.environ["GITHUB_REPOSITORY"] == "lyingtech/qizhou-core-build"
+          keep = Path("/Applications/Xcode_26.3.app").resolve(strict=True)
+          assert keep.parent == Path("/Applications")
+          for candidate in Path("/Applications").glob("Xcode*.app"):
+              if candidate.is_symlink() or candidate.resolve() == keep:
+                  continue
+              assert candidate.parent == Path("/Applications")
+              print("Remove unused VM Xcode:", candidate, flush=True)
+              subprocess.run(["sudo", "rm", "-rf", "--", str(candidate)], check=True)
+          for disposable in ["/Library/Developer/CoreSimulator", "/Users/runner/Library/Developer/CoreSimulator"]:
+              print("Remove unused VM simulators:", disposable, flush=True)
+              subprocess.run(["sudo", "rm", "-rf", "--", disposable], check=True)
+          PY
+          xcrun --sdk macosx --show-sdk-path
       - name: Measure only - no source download or paid resources
         shell: bash
         run: |
